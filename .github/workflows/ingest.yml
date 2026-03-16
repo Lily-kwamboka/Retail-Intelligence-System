@@ -1,41 +1,69 @@
 name: POS Ingestion Pipeline
+
 on:
   schedule:
-    - cron: '0 3 * * *'   # Runs daily at 6AM Nairobi time (03:00 UTC)
-  workflow_dispatch:        # Allows manual trigger from GitHub UI
+    - cron: '0 3 * * *'
+  workflow_dispatch:
   push:
-    branches: [main]        # Runs tests on every code push
+    branches: [main]
+
 jobs:
   test-and-ingest:
     runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_USER: rubis_user
+          POSTGRES_PASSWORD: rubis2024
+          POSTGRES_DB: rubis_pos
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+
       - name: Set up Python 3.11
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
+
       - name: Install dependencies
-        run: |
-          pip install -r requirements.txt
-          pip install pytest
+        run: pip install -r requirements.txt
+
+      - name: Apply database schema
+        env:
+          PGPASSWORD: rubis2024
+        run: psql -h localhost -U rubis_user -d rubis_pos -f database/schema.sql
+
       - name: Run tests
         run: pytest tests/ -v
+
       - name: Set up Chrome
         uses: browser-actions/setup-chrome@v1
+
       - name: Run ingestion pipeline
         env:
           POS_URL: ${{ secrets.POS_URL }}
           POS_USER: ${{ secrets.POS_USER }}
           POS_PASS: ${{ secrets.POS_PASS }}
-          DB_URL: ${{ secrets.DB_URL }}
+          DB_URL: postgresql://rubis_user:rubis2024@localhost:5432/rubis_pos
         run: python ingestion/pipeline.py
+
       - name: Upload logs on failure
         if: failure()
         uses: actions/upload-artifact@v4
         with:
           name: pipeline-logs
           path: logs/
+
       - name: Send failure alert
         if: failure()
         uses: dawidd6/action-send-mail@v3
