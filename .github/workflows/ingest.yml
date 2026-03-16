@@ -44,7 +44,18 @@ jobs:
       - name: Apply database schema
         env:
           PGPASSWORD: rubis2024
-        run: psql -h localhost -U rubis_user -d rubis_pos -f database/schema.sql
+        run: |
+          echo "=== Testing database connection ==="
+          psql -h localhost -U rubis_user -d rubis_pos -c "SELECT 1" || exit 1
+          
+          echo "=== Applying schema ==="
+          psql -h localhost -U rubis_user -d rubis_pos -f database/schema.sql -v ON_ERROR_STOP=1
+          
+          echo "=== Verifying tables ==="
+          psql -h localhost -U rubis_user -d rubis_pos -c "\dt"
+          
+          echo "=== Verifying unique constraint ==="
+          psql -h localhost -U rubis_user -d rubis_pos -c "\d pos_sales" | grep -A5 "Indexes"
 
       - name: Run tests
         run: pytest tests/ -v
