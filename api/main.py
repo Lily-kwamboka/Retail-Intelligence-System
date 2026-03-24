@@ -1,8 +1,7 @@
-# api/main.py
-# Rubis POS — FastAPI Layer (Secured)
-
 from fastapi import FastAPI, Depends, Request
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import HTMLResponse
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
@@ -25,6 +24,14 @@ app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 app.include_router(auth_router, prefix="/auth", tags=["Authentication"])
 app.add_middleware(TrustedHostMiddleware, allowed_hosts=["localhost", "127.0.0.1", "*"])
+
+# ─────────────────────────────────────────
+# STATIC FILES (if you have CSS/JS)
+# ─────────────────────────────────────────
+# Uncomment if you have static files like CSS, JS, images
+# static_dir = os.path.join(os.path.dirname(__file__), "static")
+# if os.path.exists(static_dir):
+#     app.mount("/static", StaticFiles(directory=static_dir), name="static")
 
 # ─────────────────────────────────────────
 # SECURITY HEADERS
@@ -63,6 +70,63 @@ class ProductFilter(BaseModel):
 # ─────────────────────────────────────────
 def get_engine():
     return create_engine(os.getenv('DB_URL'))
+
+# ─────────────────────────────────────────
+# AUTHENTICATION PAGES
+# ─────────────────────────────────────────
+@app.get("/login", response_class=HTMLResponse)
+def login_page():
+    """Serve the login page"""
+    template_path = os.path.join("api", "templates", "auth.html")
+    
+    # Check if template exists
+    if not os.path.exists(template_path):
+        # Return a fallback HTML if template not found
+        return HTMLResponse(content="""
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <title>Login - Retail Intelligence System</title>
+            <style>
+                body { font-family: Arial, sans-serif; margin: 50px; text-align: center; }
+                .error { color: red; background: #ffeeee; padding: 20px; border-radius: 5px; }
+            </style>
+        </head>
+        <body>
+            <div class="error">
+                <h1>Template Not Found</h1>
+                <p>The authentication template file is missing at: api/templates/auth.html</p>
+                <p>Please ensure the file exists with the proper structure.</p>
+            </div>
+        </body>
+        </html>
+        """, status_code=404)
+    
+    try:
+        with open(template_path, "r", encoding="utf-8") as f:
+            return f.read()
+    except Exception as e:
+        return HTMLResponse(content=f"""
+        <!DOCTYPE html>
+        <html>
+        <head><title>Error</title></head>
+        <body>
+            <h1>Error Loading Template</h1>
+            <p>Could not load the authentication page: {str(e)}</p>
+        </body>
+        </html>
+        """, status_code=500)
+
+@app.get("/register", response_class=HTMLResponse)
+def register_page():
+    """Serve the registration page (if you want a separate registration page)"""
+    template_path = os.path.join("api", "templates", "auth.html")
+    
+    if not os.path.exists(template_path):
+        return HTMLResponse(content="<h1>Template not found</h1>", status_code=404)
+    
+    with open(template_path, "r", encoding="utf-8") as f:
+        return f.read()
 
 # ─────────────────────────────────────────
 # ENDPOINTS
