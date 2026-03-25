@@ -40,14 +40,4 @@ streamlit run my_dashboard/app.py
 ```
 The dashboard will open automatically at `http://localhost:8501`.
 
-## ⚙️ Configuration (.env)
-
-| Variable | Description |
-| :--- | :--- |
-| `DB_URL` | SQLAlchemy database URL (e.g., `sqlite:///./retail_intelligence.db`) |
-| `GMAIL_USER` | Gmail address for the alert engine |
-| `GMAIL_APP_PASSWORD` | App-specific password for Gmail SMTP |
-| `ALERT_EMAIL_TO` | Recipient email for system-generated alerts |
-
----
 *Built with ❤️ for Retail Excellence.*
