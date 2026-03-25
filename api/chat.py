@@ -1,23 +1,25 @@
 # api/chat.py
-# Rubis Intelligence — Chatbot proxy endpoint (Groq)
+# Msingi Retail Intelligence — Nuru AI Analyst (Groq)
 # The Groq API key lives here (server side) and is NEVER sent to the frontend.
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Request, Depends
 from pydantic import BaseModel, validator
 from typing import List
 from slowapi import Limiter
 from slowapi.util import get_remote_address
 from groq import Groq
+from sqlalchemy import create_engine, text
+from api.auth import get_current_user
 import os
 import logging
 
 router = APIRouter()
-logger = logging.getLogger("rubis.chat")
+logger = logging.getLogger("msingi.chat")
 limiter = Limiter(key_func=get_remote_address)
 
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 if not GROQ_API_KEY:
-    logger.warning("GROQ_API_KEY not set — chatbot will be unavailable")
+    logger.warning("GROQ_API_KEY not set — Nuru will be unavailable")
 
 # ─────────────────────────────────────────
 # MODELS
@@ -47,41 +49,177 @@ class ChatRequest(BaseModel):
 
     @validator("messages")
     def limit_history(cls, v):
-        # Keep only the last 10 messages to control token usage
         return v[-10:]
 
     @validator("system")
     def sanitize_system(cls, v):
-        # The system prompt comes from the HTML — cap it to prevent abuse
         if len(v) > 3000:
             return v[:3000]
         return v
 
 # ─────────────────────────────────────────
-# CHAT ENDPOINT
-# Rate limited to prevent API abuse
+# LIVE KPI CONTEXT LOADER
+# ─────────────────────────────────────────
+def get_live_kpi_context() -> str:
+    """Pull live KPIs from PostgreSQL and format as context for Nuru."""
+    try:
+        engine = create_engine(os.getenv("DB_URL"), pool_pre_ping=True)
+        with engine.connect() as conn:
+            summary = conn.execute(text("""
+                SELECT
+                    COUNT(DISTINCT branch)             AS total_branches,
+                    COUNT(DISTINCT sku_code)           AS total_products,
+                    ROUND(SUM(net_sale)::NUMERIC, 2)   AS total_revenue,
+                    ROUND(AVG(margin_pct)::NUMERIC, 2) AS avg_margin,
+                    MAX(sales_date)                    AS latest_date
+                FROM pos_sales
+            """)).fetchone()
+
+            branches = conn.execute(text("""
+                SELECT
+                    branch,
+                    ROUND(SUM(net_sale)::NUMERIC, 2)   AS revenue,
+                    ROUND(AVG(margin_pct)::NUMERIC, 2) AS avg_margin,
+                    COUNT(DISTINCT sku_code)            AS products
+                FROM pos_sales
+                GROUP BY branch
+                ORDER BY revenue DESC
+            """)).fetchall()
+
+            low_margin = conn.execute(text("""
+                SELECT product_name, branch,
+                       ROUND(AVG(margin_pct)::NUMERIC, 2) AS avg_margin
+                FROM pos_sales
+                WHERE margin_pct < 5 AND margin_pct IS NOT NULL
+                GROUP BY product_name, branch
+                ORDER BY avg_margin ASC
+                LIMIT 5
+            """)).fetchall()
+
+            top_products = conn.execute(text("""
+                SELECT product_name,
+                       ROUND(SUM(net_sale)::NUMERIC, 2) AS revenue
+                FROM pos_sales
+                GROUP BY product_name
+                ORDER BY revenue DESC
+                LIMIT 5
+            """)).fetchall()
+
+            stockout = conn.execute(text("""
+                SELECT product_name, branch,
+                       SUM(quantity) AS total_qty
+                FROM pos_sales
+                GROUP BY product_name, branch
+                HAVING SUM(quantity) < 10
+                ORDER BY total_qty ASC
+                LIMIT 5
+            """)).fetchall()
+
+            departments = conn.execute(text("""
+                SELECT department,
+                       ROUND(SUM(net_sale)::NUMERIC, 2)   AS revenue,
+                       ROUND(AVG(margin_pct)::NUMERIC, 2) AS avg_margin
+                FROM pos_sales
+                WHERE department IS NOT NULL
+                GROUP BY department
+                ORDER BY revenue DESC
+                LIMIT 5
+            """)).fetchall()
+
+        branch_lines = "\n".join([
+            f"  - {r.branch}: KES {r.revenue:,.0f} revenue | "
+            f"{r.avg_margin:.1f}% avg margin | {r.products} products"
+            for r in branches
+        ])
+
+        low_margin_lines = "\n".join([
+            f"  - {r.product_name} @ {r.branch}: {r.avg_margin:.1f}% margin"
+            for r in low_margin
+        ]) or "  None detected"
+
+        top_product_lines = "\n".join([
+            f"  - {r.product_name}: KES {r.revenue:,.0f}"
+            for r in top_products
+        ])
+
+        stockout_lines = "\n".join([
+            f"  - {r.product_name} @ {r.branch}: {r.total_qty} units remaining"
+            for r in stockout
+        ]) or "  None detected"
+
+        dept_lines = "\n".join([
+            f"  - {r.department}: KES {r.revenue:,.0f} | {r.avg_margin:.1f}% margin"
+            for r in departments
+        ])
+
+        context = f"""
+You are Nuru — an expert retail data analyst for Msingi Retail System, a multi-branch retail
+chain in Kenya. Your name is Nuru. If anyone asks your name, tell them you are
+Nuru, the Msingi Retail Intelligence AI Analyst.
+
+You have access to live operational data and answer questions about branch
+performance, product margins, stockout risks, revenue trends, and department
+performance. Be concise, specific, and always reference actual numbers from
+the data below. Use KES for all currency values. Format large numbers with
+commas. If asked something outside retail operations, politely redirect to
+business topics.
+
+=== LIVE DATA SNAPSHOT ===
+Latest data date : {summary.latest_date}
+Total branches   : {summary.total_branches}
+Total products   : {summary.total_products}
+Total revenue    : KES {summary.total_revenue:,.0f}
+Average margin   : {summary.avg_margin:.1f}%
+
+=== BRANCH PERFORMANCE (ranked by revenue) ===
+{branch_lines}
+
+=== TOP 5 PRODUCTS BY REVENUE ===
+{top_product_lines}
+
+=== TOP 5 DEPARTMENTS BY REVENUE ===
+{dept_lines}
+
+=== LOW MARGIN ALERTS (below 5%) ===
+{low_margin_lines}
+
+=== STOCKOUT RISK (critically low stock) ===
+{stockout_lines}
+"""
+        return context.strip()
+
+    except Exception as e:
+        logger.error(f"Failed to load KPI context for Nuru: {e}")
+        return (
+            "You are Nuru, the Msingi Retail System AI Analyst for Msingi Kenya. "
+            "Your name is Nuru. Live data is temporarily unavailable — answer "
+            "based on general retail best practices and let the user know that "
+            "live data could not be loaded right now."
+        )
+
+# ─────────────────────────────────────────
+# STANDARD CHAT ENDPOINT
 # ─────────────────────────────────────────
 @router.post("/chat")
 @limiter.limit("20/minute")
-async def chat(request: Request, body: ChatRequest):
+async def chat(
+    request: Request,
+    body: ChatRequest,
+    current_user=Depends(get_current_user)
+):
     if not GROQ_API_KEY:
-        raise HTTPException(status_code=503, detail="Chatbot service unavailable")
+        raise HTTPException(status_code=503, detail="Nuru is currently unavailable")
 
     try:
         client = Groq(api_key=GROQ_API_KEY)
 
-        # Build messages — Groq uses the same OpenAI-compatible format
         messages = []
-
-        # System prompt goes first
         if body.system:
             messages.append({"role": "system", "content": body.system})
-
-        # Add conversation history
         messages += [{"role": m.role, "content": m.content} for m in body.messages]
 
         response = client.chat.completions.create(
-            model="llama-3.1-8b-instant",   # Fast, free, great for chatbot use
+            model="llama-3.1-8b-instant",
             messages=messages,
             max_tokens=512,
             temperature=0.7,
@@ -97,7 +235,54 @@ async def chat(request: Request, body: ChatRequest):
             raise HTTPException(status_code=429, detail="Too many requests. Please wait a moment.")
         if "authentication" in error_msg or "api key" in error_msg:
             logger.error(f"Groq auth error: {e}")
-            raise HTTPException(status_code=502, detail="AI service configuration error.")
+            return {"reply": "I'm sorry, Nuru is having trouble connecting right now. Please check the Groq API key in the server configuration."}
         logger.error(f"Groq API error: {e}")
-        raise HTTPException(status_code=502, detail="AI service error. Please try again.")
+        return {"reply": "Nuru is temporarily unavailable. Please try again later."}
+
+# ─────────────────────────────────────────
+# NURU ANALYST ENDPOINT (UPDATED WITH FULL ERROR LOGGING)
+# ─────────────────────────────────────────
+@router.post("/chat/analyst")
+@limiter.limit("15/minute")
+async def chat_analyst(
+    request: Request,
+    body: ChatRequest,
+    current_user=Depends(get_current_user)
+):
+    """
+    Nuru analyst chat — Groq receives live KPI data as system context.
+    Management can ask natural language questions about the business.
+    """
+    if not GROQ_API_KEY:
+        return {"reply": "GROQ_API_KEY not set in .env file. Please contact administrator."}
+
+    try:
+        client = Groq(api_key=GROQ_API_KEY)
+
+        # Always inject live KPI context as Nuru's system prompt
+        live_context = get_live_kpi_context()
+
+        messages = [{"role": "system", "content": live_context}]
+        messages += [{"role": m.role, "content": m.content} for m in body.messages]
+
+        response = client.chat.completions.create(
+            model="llama-3.1-8b-instant",
+            messages=messages,
+            max_tokens=800,
+            temperature=0.4,
+        )
+
+        reply = response.choices[0].message.content or ""
+        logger.info(
+            f"Nuru analyst query by {current_user.email} — "
+            f"{len(body.messages)} messages in history"
+        )
+        return {"reply": reply}
+
+    except Exception as e:
+        # Log the full error with traceback for debugging
+        import traceback
+        error_trace = traceback.format_exc()
+        logger.error(f"Nuru Groq error:\n{error_trace}")
+        return {"reply": f"Groq API error: {type(e).__name__} - {str(e)}"}
 
