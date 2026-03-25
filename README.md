@@ -1,4 +1,4 @@
-# 📊 Msingi Retail Intelligence System
+# 📊 Retail Intelligence System
 
 A high-performance retail analytics platform designed to provide actionable insights, branch benchmarking, and AI-powered recommendations for retail networks.
 
