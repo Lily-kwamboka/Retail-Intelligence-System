@@ -390,34 +390,78 @@ def get_department_performance(request: Request, current_user=Depends(get_curren
 @limiter.limit("60/minute")
 def get_top_products(
     request: Request,
+    branch: str = Query(None),
     limit: int = Query(default=20, ge=1, le=500),
     current_user=Depends(get_current_user)
 ):
     engine = get_engine()
-    df = pd.read_sql(
-        "SELECT * FROM vw_top_products LIMIT %(limit)s",
-        engine,
-        params={"limit": limit}
-    )
+    if branch:
+        df = pd.read_sql("""
+            SELECT sku_code, product_name, branch, department,
+                   SUM(quantity) AS total_qty,
+                   ROUND(SUM(net_sale)::NUMERIC, 2) AS total_revenue,
+                   ROUND(AVG(margin_pct)::NUMERIC, 2) AS avg_margin_pct
+            FROM pos_sales
+            WHERE branch = %(branch)s
+            GROUP BY sku_code, product_name, branch, department
+            ORDER BY total_revenue DESC
+            LIMIT %(limit)s
+        """, engine, params={"branch": branch, "limit": limit})
+    else:
+        df = pd.read_sql(
+            "SELECT * FROM vw_top_products LIMIT %(limit)s",
+            engine,
+            params={"limit": limit}
+        )
     return df.to_dict(orient="records")
 
 @app.get("/products/low-margin")
 @limiter.limit("60/minute")
-def get_low_margin_products(request: Request, current_user=Depends(get_current_user)):
+def get_low_margin_products(
+    request: Request,
+    branch: str = Query(None),
+    current_user=Depends(get_current_user)
+):
     engine = get_engine()
-    df = pd.read_sql("SELECT * FROM vw_low_margin_products", engine)
+    if branch:
+        df = pd.read_sql("""
+            SELECT sku_code, product_name, branch, department,
+                   SUM(quantity) AS total_qty,
+                   ROUND(SUM(net_sale)::NUMERIC, 2) AS total_revenue,
+                   ROUND(AVG(margin_pct)::NUMERIC, 2) AS margin_pct
+            FROM pos_sales
+            WHERE branch = %(branch)s AND margin_pct < 10
+            GROUP BY sku_code, product_name, branch, department
+            ORDER BY margin_pct ASC
+        """, engine, params={"branch": branch})
+    else:
+        df = pd.read_sql("SELECT * FROM vw_low_margin_products", engine)
     return df.to_dict(orient="records")
 
 @app.get("/products/high-value")
 @limiter.limit("60/minute")
-def get_high_value_products(request: Request, current_user=Depends(get_current_user)):
+def get_high_value_products(
+    request: Request,
+    branch: str = Query(None),
+    current_user=Depends(get_current_user)
+):
     engine = get_engine()
-    df = pd.read_sql("SELECT * FROM vw_high_value_products", engine)
+    if branch:
+        df = pd.read_sql("""
+            SELECT sku_code, product_name, branch, department,
+                   SUM(quantity) AS total_qty,
+                   ROUND(SUM(net_sale)::NUMERIC, 2) AS total_revenue,
+                   ROUND(AVG(margin_pct)::NUMERIC, 2) AS avg_margin_pct
+            FROM pos_sales
+            WHERE branch = %(branch)s
+            GROUP BY sku_code, product_name, branch, department
+            HAVING SUM(net_contribution) > 10000
+            ORDER BY SUM(net_contribution) DESC
+        """, engine, params={"branch": branch})
+    else:
+        df = pd.read_sql("SELECT * FROM vw_high_value_products", engine)
     return df.to_dict(orient="records")
 
-# ─────────────────────────────────────────
-# BRANCH x DEPARTMENT
-# ─────────────────────────────────────────
 @app.get("/branch-department")
 @limiter.limit("30/minute")
 def get_branch_department(request: Request, current_user=Depends(get_current_user)):
@@ -541,8 +585,8 @@ def get_branch_scorecard(request: Request, current_user=Depends(get_current_user
             COUNT(DISTINCT sku_code)                                   AS product_variety,
             ROUND(SUM(net_contribution)::NUMERIC, 2)                   AS total_contribution,
             COUNT(CASE WHEN margin_pct < 5 THEN 1 END)                 AS low_margin_count,
-            ROUND(SUM(net_sale) * 100.0 /
-                NULLIF(SUM(SUM(net_sale)) OVER (), 0), 2)              AS revenue_share_pct
+            ROUND((SUM(net_sale) * 100.0 /
+                NULLIF(SUM(SUM(net_sale)) OVER (), 0))::NUMERIC, 2)    AS revenue_share_pct
         FROM pos_sales
         WHERE net_sale IS NOT NULL
         GROUP BY branch
@@ -578,57 +622,122 @@ def get_branch_scorecard(request: Request, current_user=Depends(get_current_user
     return df.to_dict(orient="records")
 
 # ─────────────────────────────────────────
-# RECOMMENDATIONS
+# BRANCH LIST
 # ─────────────────────────────────────────
-@app.get("/recommendations/{branch}", tags=["Recommendations"])
+@app.get("/branches/list", tags=["Utility"])
+def get_branch_list(current_user=Depends(get_current_user)):
+    engine = get_engine()
+    with engine.connect() as conn:
+        branches = conn.execute(text("SELECT DISTINCT branch FROM pos_sales ORDER BY branch")).fetchall()
+    return [b[0] for b in branches]
+
+# ─────────────────────────────────────────
+# SMART RECOMMENDATIONS
+# ─────────────────────────────────────────
+@app.get("/recommendations/{branch}/smart", tags=["Recommendations"])
 @limiter.limit("20/minute")
-def get_recommendations_for_branch(
+def get_smart_recommendations(
     request: Request,
     branch: str,
-    limit: int = Query(default=5, ge=1, le=20),
     current_user=Depends(get_current_user)
-):
+) -> dict:
     branch = validate_branch(branch)
     engine = get_engine()
-
+    
+    # Base Data Query
     df = pd.read_sql("""
-        SELECT branch, product_name, sku_code,
-               SUM(quantity)  AS total_qty,
-               SUM(net_sale)  AS total_revenue
+        SELECT branch, product_name, sku_code, department,
+               SUM(quantity)   AS total_qty,
+               SUM(net_sale)   AS total_revenue,
+               AVG(margin_pct) AS avg_margin
         FROM pos_sales
-        GROUP BY branch, product_name, sku_code
+        GROUP BY branch, product_name, sku_code, department
     """, engine)
 
     if df.empty:
-        return []
+        return {"branch": branch, "assortment": [], "price": [], "rotation": []}
 
-    # Auto-detect top branch by revenue
-    top_branch = (
-        df.groupby("branch")["total_revenue"]
-        .sum()
-        .idxmax()
-    )
-
-    # Products the top branch sells
-    top_products = df[df["branch"] == top_branch][
-        ["product_name", "sku_code", "total_qty", "total_revenue"]
-    ].copy()
-
-    # Products the target branch already sells
+    # 1. Detect Benchmark (Top Branch)
+    top_branch = df.groupby("branch")["total_revenue"].sum().idxmax()
+    
+    # 2. STRATEGY: Assortment Gap (Missing SKUs)
+    top_products = df[df["branch"] == top_branch].copy()
     branch_skus = set(df[df["branch"] == branch]["sku_code"].tolist())
+    assortment = top_products[~top_products["sku_code"].isin(branch_skus)]
+    assortment = assortment.sort_values("total_revenue", ascending=False).head(5)
 
-    # Missing = top branch sells but target branch doesn't
-    missing = top_products[~top_products["sku_code"].isin(branch_skus)]
-    missing = missing.sort_values("total_revenue", ascending=False).head(limit)
+    # 3. STRATEGY: Price Optimization (Margin Gaps)
+    # Target branch products where margin is < (system_avg - 5%)
+    system_avg_margins = df.groupby("sku_code")["avg_margin"].mean().to_dict()
+    branch_products = df[df["branch"] == branch].copy()
+    branch_products["system_avg"] = branch_products["sku_code"].map(system_avg_margins)
+    price_gaps = branch_products[
+        (branch_products["avg_margin"] < (branch_products["system_avg"] - 5)) &
+        (branch_products["total_revenue"] > 1000) # Only focus on meaningful earners
+    ].sort_values("total_revenue", ascending=False).head(4)
+
+    # 4. STRATEGY: Stock Rotation (Zero-velocity here, High-velocity there)
+    # Find products sold in other branches but 0 qty in this branch (if they are in stock)
+    # Simplified: Find products with low quantity here (< 5) but high revenue elsewhere
+    rotation = df[
+        (df["branch"] != branch) & 
+        (df["total_revenue"] > 5000) &
+        (~df["sku_code"].isin(branch_skus))
+    ].sort_values("total_revenue", ascending=False).head(3)
 
     return {
-        "branch": branch,
+        "target_branch": branch,
         "benchmark_branch": top_branch,
-        "recommendations": missing.rename(columns={
-            "total_qty":     "qty_at_benchmark",
-            "total_revenue": "revenue_at_benchmark"
-        }).to_dict(orient="records")
+        "assortment": assortment.to_dict(orient="records"),
+        "price": price_gaps.to_dict(orient="records"),
+        "rotation": rotation.to_dict(orient="records")
     }
+
+class AnalysisRequest(BaseModel):
+    branch: str
+    strategy: str
+    data: list
+
+@app.post("/recommendations/analyze", tags=["Recommendations"])
+@limiter.limit("5/minute")
+async def analyze_recommendation_ai(
+    request: Request,
+    body: AnalysisRequest,
+    current_user=Depends(get_current_user)
+):
+    """Gladwell AI: Generate strategic business narrative for a recommendation set."""
+    if not os.getenv("GROQ_API_KEY"):
+        return {"insight": "AI analysis unavailable (Missing API Key)."}
+
+    from groq import Groq
+    client = Groq(api_key=os.getenv("GROQ_API_KEY"))
+
+    data_summary = "\n".join([
+        f"- {r.get('product_name')}: Rev KES {r.get('total_revenue', 0):,.0f} | Margin {r.get('avg_margin', 0):.1f}%"
+        for r in body.data
+    ])
+
+    prompt = f"""
+You are Gladwell AI, a senior retail strategist for Msingi Kenya.
+Analyze these {body.strategy} findings for the '{body.branch}' branch:
+{data_summary}
+
+Provide a 2-sentence "Gladwell Strategic Insight" that explains the business value 
+of acting on these recommendations. Be professional, direct, and mention at 
+least one specific product from the list. Don't re-introduce yourself.
+"""
+
+    try:
+        response = client.chat.completions.create(
+            model="llama-3.1-8b-instant",
+            messages=[{"role": "user", "content": prompt}],
+            max_tokens=150,
+            temperature=0.5,
+        )
+        return {"insight": response.choices[0].message.content.strip()}
+    except Exception as e:
+        logger.error(f"Gladwell Analysis failed: {e}")
+        return {"insight": "Analysis failed. However, the numeric data remains valid for decision making."}
 
 # ─────────────────────────────────────────
 # DATA QUALITY
