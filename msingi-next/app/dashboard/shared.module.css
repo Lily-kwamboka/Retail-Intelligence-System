@@ -2,6 +2,7 @@
   font-size: 1.6rem;
   font-weight: 800;
   margin-bottom: 4px;
+  color: var(--text);
 }
 
 .pageSub {
@@ -19,7 +20,7 @@
 
 .chartCard {
   padding: 1.25rem 1.5rem 1rem;
-  overflow-x: auto;   /* allows horizontal scroll for entire card */
+  overflow-x: auto;
   max-width: 100%;
   display: block;
 }
@@ -34,7 +35,7 @@
 .tableCard {
   padding: 1.25rem 1.5rem;
   margin-bottom: 1rem;
-  overflow-x: auto;   /* scroll for wide tables */
+  overflow-x: auto;
 }
 
 .twoCol {
@@ -58,6 +59,7 @@
   font-size: 0.95rem;
   font-weight: 700;
   margin-bottom: 1rem;
+  color: var(--text);
 }
 
 .alertBox {
@@ -73,6 +75,10 @@
 .alertWarn { background: #fff3e0; color: var(--warning); border-left: 3px solid var(--warning); }
 .alertOk   { background: #e8f5ee; color: var(--success); border-left: 3px solid var(--success); }
 .alertFail { background: #ffebee; color: var(--error);   border-left: 3px solid var(--error); }
+
+:global(.dark) .alertWarn { background: rgba(245,158,11,0.12); }
+:global(.dark) .alertOk   { background: rgba(16,185,129,0.12); }
+:global(.dark) .alertFail { background: rgba(239,68,68,0.12); }
 
 .spinner {
   width: 32px;
@@ -93,7 +99,6 @@
   color: #fff;
   border: none;
   border-radius: 9px;
-  font-family: var(--font-display);
   font-size: 0.875rem;
   font-weight: 600;
   cursor: pointer;
@@ -108,7 +113,6 @@
   color: var(--primary);
   border: 1.5px solid var(--primary);
   border-radius: 9px;
-  font-family: var(--font-display);
   font-size: 0.875rem;
   font-weight: 600;
   cursor: pointer;
@@ -129,10 +133,10 @@
   border-radius: 8px;
   padding: 0.5rem 1rem;
   font-size: 0.8rem;
+  color: var(--text);
 }
 
 .metaBadge strong {
-  font-family: var(--font-display);
   font-size: 1.1rem;
   color: var(--primary);
   display: block;
@@ -141,3 +145,5 @@
 @media (max-width: 900px) {
   .chartGrid, .twoCol { grid-template-columns: 1fr; }
 }
+
+

@@ -1,7 +1,10 @@
 "use client";
 import { useApi } from "@/hooks/useApi";
 import MetricCard from "@/components/MetricCard";
-import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell, ReferenceLine } from "recharts";
+import {
+  BarChart, Bar, XAxis, YAxis, Tooltip,
+  ResponsiveContainer, Cell, ReferenceLine, CartesianGrid
+} from "recharts";
 import { FaChartLine, FaStore, FaBox, FaReceipt } from "react-icons/fa";
 import styles from "./page.module.css";
 import sharedStyles from "./shared.module.css";
@@ -14,7 +17,32 @@ interface Summary {
   last_pipeline_run: string;
 }
 
-const GREEN_SCALE = ["#1A6B3C","#2E7D32","#388E3C","#43A047","#4CAF50","#66BB6A","#81C784","#A5D6A7"];
+const BAR_PALETTE = [
+  "#6366F1","#F59E0B","#10B981","#EF4444",
+  "#3B82F6","#EC4899","#14B8A6","#F97316",
+  "#8B5CF6","#06B6D4","#84CC16","#A78BFA",
+];
+
+const tickStyle = { fontSize: 11, fill: "var(--text-secondary, #888)" };
+
+const CustomTooltip = ({ active, payload, label, formatter }: any) => {
+  if (!active || !payload?.length) return null;
+  const { label: valLabel, value } = formatter(payload[0].value);
+  return (
+    <div style={{
+      background: "var(--card-bg, #1e1e2e)",
+      border: "1px solid var(--border-color, #333)",
+      borderRadius: 8,
+      padding: "10px 14px",
+      fontSize: 13,
+      color: "var(--text-primary, #f0f0f0)",
+      boxShadow: "0 4px 16px rgba(0,0,0,0.25)",
+    }}>
+      <p style={{ margin: 0, fontWeight: 600, marginBottom: 4 }}>{label}</p>
+      <p style={{ margin: 0, color: payload[0].fill }}>{valLabel}: <strong>{value}</strong></p>
+    </div>
+  );
+};
 
 export default function DashboardPage() {
   const { data: summary, loading } = useApi<Summary>("/summary");
@@ -50,56 +78,26 @@ export default function DashboardPage() {
         </div>
       ) : (
         <div className={styles.kpiGrid}>
-          <MetricCard
-            label="Total Revenue"
-            value={`KES ${(summary?.total_net_revenue ?? 0).toLocaleString(undefined, { maximumFractionDigits: 0 })}`}
-            sub="Net sales across all branches"
-            icon={<FaChartLine />}
-            accent="green"
-            delay={0}
-          />
-          <MetricCard
-            label="Active Branches"
-            value={summary?.total_branches ?? 0}
-            sub="Reporting locations"
-            icon={<FaStore />}
-            accent="green"
-            delay={80}
-          />
-          <MetricCard
-            label="Unique Products"
-            value={(summary?.total_unique_products ?? 0).toLocaleString()}
-            sub="Distinct SKUs tracked"
-            icon={<FaBox />}
-            accent="amber"
-            delay={160}
-          />
-          <MetricCard
-            label="Transactions"
-            value={(summary?.total_rows ?? 0).toLocaleString()}
-            sub="Total POS records"
-            icon={<FaReceipt />}
-            accent="green"
-            delay={240}
-          />
+          <MetricCard label="Total Revenue" value={`KES ${(summary?.total_net_revenue ?? 0).toLocaleString(undefined, { maximumFractionDigits: 0 })}`} sub="Net sales across all branches" icon={<FaChartLine />} accent="green" delay={0} />
+          <MetricCard label="Active Branches" value={summary?.total_branches ?? 0} sub="Reporting locations" icon={<FaStore />} accent="blue" delay={80} />
+          <MetricCard label="Unique Products" value={(summary?.total_unique_products ?? 0).toLocaleString()} sub="Distinct SKUs tracked" icon={<FaBox />} accent="amber" delay={160} />
+          <MetricCard label="Transactions" value={(summary?.total_rows ?? 0).toLocaleString()} sub="Total POS records" icon={<FaReceipt />} accent="violet" delay={240} />
         </div>
       )}
 
-      {/* Branch + Margin charts on the overview */}
       {display.length > 0 && (
         <div className={sharedStyles.chartGrid} style={{ marginBottom: "1.5rem" }}>
           {revCol && (
             <div className={`card ${sharedStyles.chartCard}`}>
               <h3 className={sharedStyles.chartTitle}>Revenue by Branch</h3>
               <ResponsiveContainer width="100%" height={260}>
-                <BarChart data={display} margin={{ top: 8, right: 8, bottom: 40, left: 8 }}>
-                  <XAxis dataKey="branch" tick={{ fontSize: 11 }} angle={-30} textAnchor="end" interval={0} />
-                  <YAxis tick={{ fontSize: 11 }} tickFormatter={(v) => `${(v/1000).toFixed(0)}K`} />
-                  <Tooltip formatter={(v: number) => [`KES ${v.toLocaleString()}`, "Revenue"]} />
-                  <Bar dataKey={revCol} radius={[4,4,0,0]}>
-                    {display.map((_, i) => (
-                      <Cell key={i} fill={GREEN_SCALE[i % GREEN_SCALE.length]} />
-                    ))}
+                <BarChart data={display} margin={{ top: 8, right: 16, bottom: 44, left: 8 }} barCategoryGap="30%">
+                  <CartesianGrid strokeDasharray="3 3" stroke="var(--border-color, rgba(255,255,255,0.08))" vertical={false} />
+                  <XAxis dataKey="branch" tick={tickStyle} angle={-30} textAnchor="end" interval={0} axisLine={{ stroke: "var(--border-color, #444)" }} tickLine={false} />
+                  <YAxis tick={tickStyle} tickFormatter={(v) => `${(v/1000).toFixed(0)}K`} axisLine={false} tickLine={false} />
+                  <Tooltip cursor={{ fill: "rgba(255,255,255,0.05)" }} content={<CustomTooltip formatter={(v: number) => ({ label: "Revenue", value: `KES ${v.toLocaleString()}` })} />} />
+                  <Bar dataKey={revCol} radius={[5,5,0,0]} maxBarSize={44}>
+                    {display.map((_, i) => <Cell key={i} fill={BAR_PALETTE[i % BAR_PALETTE.length]} opacity={0.9} />)}
                   </Bar>
                 </BarChart>
               </ResponsiveContainer>
@@ -110,15 +108,17 @@ export default function DashboardPage() {
             <div className={`card ${sharedStyles.chartCard}`}>
               <h3 className={sharedStyles.chartTitle}>Margin % by Branch</h3>
               <ResponsiveContainer width="100%" height={260}>
-                <BarChart data={display} margin={{ top: 8, right: 8, bottom: 40, left: 8 }}>
-                  <XAxis dataKey="branch" tick={{ fontSize: 11 }} angle={-30} textAnchor="end" interval={0} />
-                  <YAxis tick={{ fontSize: 11 }} tickFormatter={(v) => `${v}%`} />
-                  <Tooltip formatter={(v: number) => [`${v}%`, "Avg Margin"]} />
-                  <ReferenceLine y={5} stroke="#D32F2F" strokeDasharray="4 4" label={{ value: "5% Min", fill: "#D32F2F", fontSize: 11 }} />
-                  <Bar dataKey={marginCol} radius={[4,4,0,0]}>
+                <BarChart data={display} margin={{ top: 8, right: 16, bottom: 44, left: 8 }} barCategoryGap="30%">
+                  <CartesianGrid strokeDasharray="3 3" stroke="var(--border-color, rgba(255,255,255,0.08))" vertical={false} />
+                  <XAxis dataKey="branch" tick={tickStyle} angle={-30} textAnchor="end" interval={0} axisLine={{ stroke: "var(--border-color, #444)" }} tickLine={false} />
+                  <YAxis tick={tickStyle} tickFormatter={(v) => `${v}%`} axisLine={false} tickLine={false} />
+                  <Tooltip cursor={{ fill: "rgba(255,255,255,0.05)" }} content={<CustomTooltip formatter={(v: number) => ({ label: "Avg Margin", value: `${v}%` })} />} />
+                  <ReferenceLine y={5} stroke="#EF4444" strokeDasharray="5 4" label={{ value: "5% Min", fill: "#EF4444", fontSize: 11, position: "insideTopRight" }} />
+                  <Bar dataKey={marginCol} radius={[5,5,0,0]} maxBarSize={44}>
                     {display.map((row, i) => {
                       const val = Number(row[marginCol!] ?? 0);
-                      return <Cell key={i} fill={val < 5 ? "#D32F2F" : val < 10 ? "#ED6C02" : "#1A6B3C"} />;
+                      const fill = val < 5 ? "#EF4444" : val < 10 ? "#F97316" : BAR_PALETTE[i % BAR_PALETTE.length];
+                      return <Cell key={i} fill={fill} opacity={0.9} />;
                     })}
                   </Bar>
                 </BarChart>
@@ -137,3 +137,4 @@ export default function DashboardPage() {
     </div>
   );
 }
+
