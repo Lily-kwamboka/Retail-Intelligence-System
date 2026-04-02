@@ -13,7 +13,7 @@ const nextConfig = {
   reactStrictMode: false,
 
   // Fix lockfile workspace warning
-  outputFileTracingRoot: require('path').join(__dirname, '../../'),
+
 };
 
 module.exports = nextConfig;
