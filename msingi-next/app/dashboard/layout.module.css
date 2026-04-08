@@ -28,3 +28,16 @@
   animation: spin 0.7s linear infinite;
   display: inline-block;
 }
+
+/* ✅ ADD THIS — mobile fix */
+@media (max-width: 768px) {
+  .shell {
+    flex-direction: column;
+  }
+
+  .main {
+    margin-left: 0;        /* removes the 230px sidebar offset */
+    padding: 5rem 1rem 1.5rem; /* top padding makes room for hamburger button */
+    width: 100%;
+  }
+}
