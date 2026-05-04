@@ -47,10 +47,31 @@ jobs:
           python -m pip install -r requirements.txt
           python -m pip install pytest
  
-      - name: Apply database schema
+      - name: Apply schema to local test database
         env:
           PGPASSWORD: rubis2024
         run: psql -h localhost -U rubis_user -d rubis_pos -f database/schema.sql
+ 
+      - name: Apply schema to Render database
+        env:
+          DB_URL: ${{ secrets.DB_URL }}
+        run: |
+          python -c "
+import os
+from sqlalchemy import create_engine, text
+ 
+engine = create_engine(os.environ['DB_URL'])
+with open('database/schema.sql') as f:
+    sql = f.read()
+ 
+with engine.connect() as conn:
+    for statement in sql.split(';'):
+        statement = statement.strip()
+        if statement:
+            conn.execute(text(statement))
+    conn.commit()
+print('Schema applied to Render database successfully!')
+"
  
       - name: Run tests
         run: python -m pytest tests/ -v 2>&1 | tee logs/tests.log
