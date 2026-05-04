@@ -52,7 +52,12 @@ jobs:
           PGPASSWORD: rubis2024
         run: psql -h localhost -U rubis_user -d rubis_pos -f database/schema.sql
  
-      - name: Apply schema to Render database
+      - name: Apply views to local test database
+        env:
+          PGPASSWORD: rubis2024
+        run: psql -h localhost -U rubis_user -d rubis_pos -f database/analytics_views.sql
+ 
+      - name: Apply schema and views to Render database
         env:
           DB_URL: ${{ secrets.DB_URL }}
         run: |
@@ -61,16 +66,19 @@ jobs:
           from sqlalchemy import create_engine, text
  
           engine = create_engine(os.environ['DB_URL'])
-          with open('database/schema.sql') as f:
-              sql = f.read()
  
-          with engine.connect() as conn:
-              for statement in sql.split(';'):
-                  statement = statement.strip()
-                  if statement:
-                      conn.execute(text(statement))
-              conn.commit()
-          print('Schema applied to Render database successfully!')
+          files = ['database/schema.sql', 'database/analytics_views.sql']
+ 
+          for filepath in files:
+              with open(filepath) as f:
+                  sql = f.read()
+              with engine.connect() as conn:
+                  for statement in sql.split(';'):
+                      statement = statement.strip()
+                      if statement:
+                          conn.execute(text(statement))
+                  conn.commit()
+              print(f'{filepath} applied to Render database successfully!')
           EOF
  
       - name: Run tests
