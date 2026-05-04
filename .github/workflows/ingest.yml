@@ -56,22 +56,22 @@ jobs:
         env:
           DB_URL: ${{ secrets.DB_URL }}
         run: |
-          python -c "
-import os
-from sqlalchemy import create_engine, text
+          python - <<'EOF'
+          import os
+          from sqlalchemy import create_engine, text
  
-engine = create_engine(os.environ['DB_URL'])
-with open('database/schema.sql') as f:
-    sql = f.read()
+          engine = create_engine(os.environ['DB_URL'])
+          with open('database/schema.sql') as f:
+              sql = f.read()
  
-with engine.connect() as conn:
-    for statement in sql.split(';'):
-        statement = statement.strip()
-        if statement:
-            conn.execute(text(statement))
-    conn.commit()
-print('Schema applied to Render database successfully!')
-"
+          with engine.connect() as conn:
+              for statement in sql.split(';'):
+                  statement = statement.strip()
+                  if statement:
+                      conn.execute(text(statement))
+              conn.commit()
+          print('Schema applied to Render database successfully!')
+          EOF
  
       - name: Run tests
         run: python -m pytest tests/ -v 2>&1 | tee logs/tests.log
@@ -113,5 +113,6 @@ print('Schema applied to Render database successfully!')
             Check logs at: ${{ github.server_url }}/${{ github.repository }}/actions
           to: dazliliankwamboka@gmail.com
           from: Rubis Pipeline Bot
+ 
  
  
